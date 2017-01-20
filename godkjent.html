@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<head>
+<title>Feide</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	
+<link rel="stylesheet" href="leaflet/leaflet.css" />
+<link rel="stylesheet" href="leaflet/leaflet.rrose.css" />
+<link rel="stylesheet" href="style.css" />
+
+<script type="text/javascript" src="https://www.google.com/jsapi"></script>
+
+<script src="https://code.jquery.com/jquery-1.12.0.min.js"></script>
+<script src="https://code.jquery.com/jquery-migrate-1.2.1.min.js"></script>
+
+<script src="leaflet/leaflet.js"></script>
+<script src="leaflet/leaflet.rrose-src.js"></script>
+
+<script type="text/javascript" src="data/municipalities.js"></script>
+<script type="text/javascript" src="data/counties.js"></script>
+<script type="text/javascript" src="data/status_godkjent.js"></script>
+
+<script type="text/javascript">
+	google.setOnLoadCallback(drawVisualizations);
+	
+	var municipalities;
+	var counties;
+
+	function drawVisualizations() {
+		var fusionTableColumn = {
+			ID : 0,
+			STATUS : 1
+		};
+		
+		var query = 'SELECT ID, STATUS FROM 1UooHDpiX-ll5auz06aiIo5Afxhodju1N_zYeMLw';
+		var encodedQuery = encodeURIComponent(query);
+					
+		var url = ['https://www.googleapis.com/fusiontables/v1/query'];
+		url.push('?sql=' + encodedQuery);
+		url.push('&key=AIzaSyC6LEcx13TBMaHCTrMKfjWt8xSF-BBWalc');
+	
+		$.getJSON(url.join(''), function(data) {	
+			municipalities = {"type":"FeatureCollection","features":[]};
+   			for (var i in municipalityData.features) {
+   				var municipality = municipalityData.features[i];
+    				for (var k in data.rows) {
+   					if (municipality.properties.id == data.rows[k][fusionTableColumn.ID])
+   						municipality.properties.status = data.rows[k][fusionTableColumn.STATUS];
+				}
+				municipalities.features.push(municipality);
+   			}
+   			counties = new Array();
+   			for (var id in countyData) {
+				var county = {"type":"FeatureCollection","features":[]};
+				county.name = countyData[id];
+				for (var j in municipalities.features) {
+					var municipality = municipalities.features[j];
+					var countyId = getCountyId(municipality);
+					if (id == countyId)
+						county.features.push(municipality);
+				}
+				counties.push(county);
+			}	
+   		drawMap();
+   		});
+	}
+
+   	function drawMap() {
+   		var map = new L.map('map').setView([65.4, 18], 5);
+		map.attributionControl.addAttribution('&copy; <a href="http://www.statkart.no"' +
+			'title="Gratis kartdata fra Kartverket">Kartverket</a>');
+	
+		L.tileLayer('http://{s}.tile.osm.org/{z}/{x}/{y}.png', {
+    		attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+		}).addTo(map);
+				
+   		var municipalityLayer = new L.geoJson(municipalities, {
+			style: style,
+			onEachFeature: onEachFeature
+		});
+		map.addLayer(municipalityLayer);
+		
+		var control = new L.control.layers();	
+		control.addBaseLayer(municipalityLayer, '&lt;Vis alle fylker&gt;');
+    		
+		for (var i in counties) {
+			var county = counties[i];
+			var countyLayer = new L.geoJson(county, {
+				style: style,
+				onEachFeature: onEachFeature
+			});
+			control.addBaseLayer(countyLayer, county.name);
+		}
+		control.addTo(map);
+		
+		var municipalityBounds = municipalityLayer.getBounds();	
+		
+		map.on('baselayerchange', function(e) {		
+			if (e.name != '&lt;Vis alle fylker&gt;') {
+				map.fitBounds(e.layer.getBounds());
+			} else {
+				map.fitBounds(municipalityBounds);
+			}		
+		});
+			
+		function style(feature) {
+			return statusData[feature.properties.status].style;
+		}
+		
+		function onEachFeature(feature, layer) {
+			var countyId = getCountyId(feature);
+			layer.on({
+				mouseover: highlightFeature,
+				mouseout: resetHighlight
+			});
+			layer.on('mouseover mousemove click', function(e){
+    				var hover_bubble = new L.Rrose({offset: new L.Point(0,-10), closeButton: false, autoPan: false})
+      				.setContent(feature.properties.name + ' (' + countyData[countyId] + ')')
+      				.setLatLng(e.latlng)
+     				.openOn(map);
+  			});
+  			layer.on('mouseout', function(e){
+  				map.closePopup()
+  			});
+		}
+				
+		function highlightFeature(e) {
+			var layer = e.target;
+			layer.setStyle({
+				fillOpacity: 1.0,
+				opacity: 1.0,
+				weight: 1.0
+			});
+		}
+		
+		function resetHighlight(e) {
+			var layer = e.target;
+			municipalityLayer.resetStyle(layer);
+		}
+			
+		var legend = new L.control({position: 'bottomright'});
+		legend.onAdd = function (map) {
+			var div = L.DomUtil.create('div', 'infolegend legend');
+			div.innerHTML = '<h4>Status for innføring av Feide</h4>' + 
+				'<b style="background: ' + statusData[0].style.fillColor + '"></b> ' + statusData[0].status + '<br/>' +
+				'<b style="background: ' + statusData[1].style.fillColor + '"></b> ' + statusData[1].status;
+			return div;
+		}
+		legend.addTo(map);
+		
+		var select = new L.control({position: 'topright'});
+		select.onAdd = function (map) {
+			var div = L.DomUtil.create('div', 'select');
+			div.innerHTML = '<h4>Velg fylke</h4>';
+			return div;
+		}	
+		select.addTo(map);	
+	}
+	
+	function getCountyId(feature) {
+		var municipalityId = feature.properties.id.toString();
+		var countyId = municipalityId.length > 3 ? municipalityId.substring(0, 2) : municipalityId.substring(0, 1);
+		return countyId;
+	}
+</script>
+</head>
+<body>
+	<div id="map"></div>
+</body>
+</html>
